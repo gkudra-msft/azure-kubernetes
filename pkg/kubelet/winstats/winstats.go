@@ -41,6 +41,7 @@ type Client struct {
 	memoryCommittedBytes        uint64
 	mu                          sync.Mutex
 	memoryPhysicalCapacityBytes uint64
+	timeStarted                 time.Time
 }
 
 // NewClient constructs a Client.
@@ -49,6 +50,7 @@ func NewClient() (*Client, error) {
 
 	dockerClient, _ := dockerapi.NewEnvClient()
 	client.dockerClient = dockerClient
+	client.timeStarted = time.Now()
 
 	// create physical memory
 	memory, err := getPhysicallyInstalledSystemMemoryBytes()
@@ -211,8 +213,9 @@ func (c *Client) createRootContainerInfo() *cadvisorapiv2.ContainerInfo {
 
 	rootInfo := cadvisorapiv2.ContainerInfo{
 		Spec: cadvisorapiv2.ContainerSpec{
-			HasCpu:    true,
-			HasMemory: true,
+			CreationTime: c.timeStarted,
+			HasCpu:       true,
+			HasMemory:    true,
 			Memory: cadvisorapiv2.MemorySpec{
 				Limit: c.memoryPhysicalCapacityBytes,
 			},
@@ -281,10 +284,12 @@ func (c *Client) createContainerStats(container *dockertypes.Container) (*cadvis
 
 	stats := cadvisorapiv2.ContainerStats{
 		Timestamp: time.Now(),
-		Cpu:       &cadvisorapi.CpuStats{Usage: cadvisorapi.CpuUsage{Total: dockerStats.CPUStats.CPUUsage.TotalUsage}},
-		CpuInst:   &cadvisorapiv2.CpuInstStats{},
-		Memory:    &cadvisorapi.MemoryStats{WorkingSet: dockerStats.MemoryStats.PrivateWorkingSet, Usage: dockerStats.MemoryStats.Commit},
-		Network:   &cadvisorapiv2.NetworkStats{Interfaces: networkInterfaces},
+		// have to multiply cpu usage by 100 since docker stats units is in 100's of nano seconds for Windows
+		// see https://github.com/moby/moby/blob/master/api/types/stats.go#L22
+		Cpu:     &cadvisorapi.CpuStats{Usage: cadvisorapi.CpuUsage{Total: dockerStats.CPUStats.CPUUsage.TotalUsage * 100}},
+		CpuInst: &cadvisorapiv2.CpuInstStats{},
+		Memory:  &cadvisorapi.MemoryStats{WorkingSet: dockerStats.MemoryStats.PrivateWorkingSet, Usage: dockerStats.MemoryStats.Commit},
+		Network: &cadvisorapiv2.NetworkStats{Interfaces: networkInterfaces},
 		// TODO: ... diskio, filesystem, etc...
 	}
 	return &stats, nil
